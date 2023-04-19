@@ -1,0 +1,237 @@
+---
+title: "Swire EDA"
+author: "Richard Garbett"
+date: "2/1/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+# Business Problem Statement
+
+# Swire Coca-Cola
+
+Predicting Customer Success: Problem Statement
+
+Swire Coca-Cola is a company that provides distribution for soda products in a large area of the United States. A significant amount of their business revenue is driven by local businesses and restaurants, especially when they are first opening. Swire needs to determine if the business or restaurants will be profitable, and if it would be worth it to offer lower prices. It’s essential for Swire to have a good idea of how these businesses will perform so they can offer lower prices and make a profit.
+
+Swire will be able to offer competitive prices to new restaurants and have some reassurance that risk is minimized. Success will include having a predictive model that is accurate in predicting popularity, longevity, and a total 3-year sales volume of new customers. The analytical approach will be using statistical and machine learning techniques to analyze the data set provided. 
+
+The scope of the project will include the development of a predictive model that can predict popularity, longevity, and a total 3-year salves volume of new customers, also to pricing and funding decisions. Additional analysis and sources may be added to improve accuracy. This project will be leady by Cole Lifer, Richard Garbett, and Jordan Harmer with a completion date 4/9/2023. Milestones will be gathering data and data cleaning, model development and testing, and implantation of the model in decision-making processes. 
+
+# Questions list:
+
+What are the data types?
+Can any columns be aggregated?
+What is the target variable?
+Are there any NAs, if so how many and what columns contain them?
+What is the correlation between variables? 
+What are the categorical variables and continuous variables?
+What categorical variables should be mutated into numerical variables?
+What is the correlation between numerical variables?
+Are there any variables that seem correlated, but does not show in the data?
+
+```{r }
+#Questions list:
+
+# What are the data types?
+# Can any columns be aggregated?
+# What is the target variable?
+# Are there any NAs, if so how many and what columns contain them?
+# What is the correlation between variables? 
+# What are the categorical variables and continuous variables?
+# What categorical variables should be mutated into numerical variables?
+# What is the correlation between numerical variables?
+# Are there any variables that seem correlated, but does not show in the data?
+
+
+```
+
+# Read data into R and load libraries
+
+```{r warning = FALSE}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(ggcorrplot)
+library(corrplot)
+
+
+cust_att <- read.csv("FSOP_Customer_data_v2.0.csv", na.strings = c("", "NA"))
+
+sales_data <- read.csv("FSOP_Sales_Data_v2.0.csv",  na.strings = c("", "NA"))
+
+
+
+```
+
+# Get a first look into the data.
+```{r }
+
+#Looking for data types, number of rows etc...
+
+glimpse(cust_att)
+glimpse(sales_data)
+
+```
+
+
+```{r }
+
+summary(cust_att)
+summary(sales_data)
+
+
+```
+
+
+# Are there any N/As in the data set? What columns?
+
+In the Sales data there are two columns that have missing values: BEV_CAT_DESC & CALORIE_CAT_DESC.  In the customer attributes data there is one column "County" with two missing values. I will discuss with my group on our approach to deal with them and if we need to at all.  
+```{r }
+
+
+sapply(cust_att, function(x) sum(is.na(x)))
+
+sapply(sales_data, function(x) sum(is.na(x)))
+
+
+
+
+
+```
+# Barplots for categorical data
+
+```{r }
+
+ggplot(cust_att, aes(x = SALES_OFFICE_DESCRIPTION, col = SALES_OFFICE_DESCRIPTION))+
+  geom_bar() +
+  theme_minimal() +
+  labs(title = "Sales Office location") +
+  coord_flip() 
+
+
+
+ggplot(cust_att, aes(x = DELIVERY_PLANT_DESCRIPTION, col = DELIVERY_PLANT_DESCRIPTION))+
+  geom_bar() +
+  theme_minimal() +
+  labs(title = "Sales Delivery Location") +
+  coord_flip() 
+
+# address_city was not helpful. Too many cities
+# COUNTY was not helpful. Too many counties
+# CUSTOMER_TRADE_CHANNEL_DESCRIPTION2 might be redundant
+
+# This graph sows tha tmost sales go to eating & drinking locations
+ggplot(cust_att, aes(x = CUSTOMER_ACTIVITY_CLUSTER_DESCRIPTION, col = CUSTOMER_ACTIVITY_CLUSTER_DESCRIPTION))+
+  geom_bar() +
+  theme_minimal() +
+  labs(title = "Acivity description") +
+  coord_flip() 
+
+# this graph shows the most common type of business which at first glance are Quick service restaurants and Full service restaurants
+ggplot(cust_att, aes(x = CUSTOMER_TRADE_CHANNEL_DESCRIPTION, col = CUSTOMER_TRADE_CHANNEL_DESCRIPTION))+
+  geom_bar() +
+  theme_minimal() +
+  labs(title = "Merchant Description") +
+  coord_flip() 
+
+
+# This graph shows market description
+ggplot(cust_att, aes(x = MARKET_DESCRIPTION, col = MARKET_DESCRIPTION))+
+  geom_bar() +
+  theme_minimal() +
+  labs(title = "market description") +
+  coord_flip() 
+
+# This graph shows channel description
+ggplot(cust_att, aes(x = COLD_DRINK_CHANNEL_DESCRIPTION, col = COLD_DRINK_CHANNEL_DESCRIPTION))+
+  geom_bar() +
+  theme_minimal() +
+  labs(title = "channel description") +
+  coord_flip() 
+
+
+
+```
+
+
+# Bar Plots for Sales data
+
+```{r }
+
+# This graph shows Beverage description
+ggplot(sales_data, aes(x = BEV_CAT_DESC, col = BEV_CAT_DESC))+
+  geom_bar() +
+  labs(title = "Beverage Description") +
+  coord_flip() 
+
+# This graph shows Calorie description
+ggplot(sales_data, aes(x = CALORIE_CAT_DESC, col = CALORIE_CAT_DESC))+
+  geom_bar() +
+  labs(title = "Type of beverage/calorie") +
+  coord_flip() 
+
+# This graph shows pack type description
+ggplot(sales_data, aes(x = PACK_TYPE_DESC, col = PACK_TYPE_DESC))+
+  geom_bar() +
+  labs(title = "Package type") +
+  coord_flip() 
+
+
+
+
+
+```
+
+# Correlation plot of numeric vairables in Sales data
+
+```{r }
+
+my_cor <- cor(sales_data[ unlist(lapply(sales_data, is.numeric))])
+
+
+ggcorrplot(my_cor, hc.order = TRUE, 
+           type = "lower", 
+           lab = TRUE, 
+           lab_size = 3, 
+           method="circle", 
+           colors = c("tomato2", "white", "springgreen3"), 
+           title="Correlogram of mtcars", 
+           ggtheme=theme_bw)
+
+```
+
+# Scatter plots for numeric variables that have the strongest correlation
+
+```{r }
+
+
+ggplot(sales_data, aes(x=INVOICE_PRICE, y=DEAD_NET)) +
+  geom_point(size=2, shape=23)
+labs(title = "Scatter Plot Invoice + Dead_net")
+
+ggplot(sales_data, aes(x=INVOICE_PRICE, y=COGS)) +
+  geom_point(size=2, shape=23)
+labs(title = "Scatter Plot Invoice Price + COGS")
+
+
+# no correlation between these variables.
+
+ggplot(sales_data, aes(x=NUM_OF_TRANSACTIONS, y=COGS)) +
+  geom_point(size=2, shape=23)
+labs(title = "Scatter Plot Invoice Price + COGS")
+
+
+```
+
+# Results
+
+There is some work to do to clean the data and work out the NA values. There are many categorical variables with important details that we will need to mutate into numerical values so we can test their correlation against each other and other numerical variables.  There are some very strong industry types that we will need to pay attention to such as description types: Regular restaurant business and fast restaurant business. Also, There is some work we might be able to do to cut down the number of counties or address cities. Would could potentially aggregate by region, this could be a helpful variable in the overall model. 
+
+
+
+

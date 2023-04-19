@@ -1,0 +1,172 @@
+---
+title: "Modeling Assignment"
+author: "Richard Garbett"
+date: "3/10/2023"
+output: html_document
+---
+
+```{r Setup, warning = FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+```{r data, warning = FALSE, message = FALSE}
+
+library(ggplot2)
+library(tidyverse)
+library(scales)
+library(caret)
+library(arm)
+library(gridExtra)
+library(knitr)
+library(knitr)
+library(dplyr)
+library(rminer)
+library(rmarkdown)
+library(car)
+library(tidymodels)
+library(corrplot)
+library(DALEXtra)
+library(tictoc)
+
+
+# read in data
+
+cust_att <- read.csv("FSOP_Customer_Data_v2.0.csv")
+
+sales_data <- read.csv("FSOP_Sales_Data_v2.0.csv")
+
+
+
+```
+# introduction
+
+Swire Coca-Cola is a company that provides distribution for soda products in a large area of the United States. A significant amount of their business revenue is driven by local businesses and restaurants, especially when they are first opening. Swire needs to determine if the business or restaurants will be profitable, and if it would be worth it to offer lower prices. It’s essential for Swire to have a good idea of how these businesses will perform so they can offer lower prices and make a profit.
+
+Swire will be able to offer competitive prices to new restaurants and have some reassurance that risk is minimized. Success will include having a predictive model that is accurate in predicting popularity, longevity, and a total 3-year sales volume of new customers. The analytical approach will be using statistical and machine learning techniques to analyze the data set provided. 
+
+The scope of the project will include the development of a predictive model that can predict popularity, longevity, and a total 3-year salves volume of new customers, also to pricing and funding decisions. Additional analysis and sources may be added to improve accuracy. This project will be leady by Cole Lifer, Richard Garbett, and Jordan Harmer with a completion date 4/9/2023. Milestones will be gathering data and data cleaning, model development and testing, and implantation of the model in decision-making processes.
+
+### Data Exploration
+
+```{r EDA, warning = FALSE, message = FALSE }
+
+# understanding data
+summary(cust_att)
+summary(sales_data)
+
+# get idea of data type and what data looks like
+glimpse(cust_att)
+glimpse(sales_data)
+
+# looking for missing values
+sapply(cust_att, function(x) sum(is.na(x)))
+sapply(sales_data, function(x) sum(is.na(x)))
+  
+```
+
+### Creating Variables/ Data Prep
+
+```{r variables, warning = FALSE, message = FALSE }
+#Customer data prep / Creating outcome variable customer age
+
+nc <- cust_att %>%
+  mutate(New_Onboard = as.Date(ON_BOARDING_DATE, "%m/%d/%Y"),
+  Pulled_Date = as.Date("2023-02-11"),
+  Cust_Age_Yrs = round(as.numeric((difftime(Pulled_Date, New_Onboard, units = "days"))/365),digits = 4))
+
+sum(is.na(nc$ON_BOARDING_DATE))
+sum(is.na(nc$Pulled_Date))
+sum(nc$ON_BOARDING_DATE >= "2023-02-19")
+
+# Sales data prep
+
+sales_data <- sales_data %>%
+    mutate(cust_start_date = as.Date(MIN_POSTING_DATE, format = "%m/%d/%Y"),
+           cust_end_date = as.Date(MAX_POSTING_DATE,format = "%m/%d/%Y"))
+
+# Getting max of max posting date for customers
+
+maxtrans <- aggregate(cust_end_date ~ ï..CUSTOMER_NUMBER_BLINDED, sales_data, max)
+
+Nc1 <- nc[,-18:-19]
+Nc1 <- merge(Nc1, maxtrans , by="ï..CUSTOMER_NUMBER_BLINDED")
+
+# new customer age variable
+
+nc2 <- Nc1 %>%
+    mutate(Cust_Age_Yrs = round(as.numeric((difftime(cust_end_date, New_Onboard, units = "days"))/365),digits = 4))
+
+# Bucketing
+
+# commenting out due to length
+
+#within(nc2, nc2$Cust_Age_Bucket <- ifelse(Cust_Age_Yrs < 2, 1, 
+ #                       ifelse(Cust_Age_Yrs < 3 & Cust_Age_Yrs > 2 , 2,
+  #                            ifelse(Cust_Age_Yrs > 3 , 3 ,NA))) )
+
+# Creating a new column called Age_Group
+
+nc2$Age_Group <- ifelse(nc2$Cust_Age_Yrs < 2, 1, ifelse(nc2$Cust_Age_Yrs >= 2 & nc2$Cust_Age_Yrs <= 3, 2, 3))
+
+max(nc2$Age_Group)
+min(nc2$Age_Group)
+
+nc2 <- nc2 %>%
+  mutate(Age_Group = factor(Age_Group, levels = c("1", "2", "3")))
+
+
+
+GP <- aggregate(GROSS_PROFIT_DEAD_NET ~ ï..CUSTOMER_NUMBER_BLINDED, sales_data , max)
+
+LMCustD <- merge(nc2, GP , by="ï..CUSTOMER_NUMBER_BLINDED")
+
+
+
+
+```
+The data required a lot of cleaning. There were missing values for some continuous variables, negative invoices that were not exactly clear. My team and I worked on creating the necessary variables and cleaning some of the data, but we'll need to continue to clean the data to make our model's more efficient. However, we have a good start. 
+
+The goal of the model and what Swire is looking for is to predict if it is worth on-boarding a customer and if they'll last three years and be profitable. Creating two variables, one that buckets customer into length of time they have been purchasing from swire, and two total revenue. With these variables we should be able to begin to build a model that is efficient using Linear or logistic regression. 
+
+# Modeling Linear Regression and Logistic Regresssion
+
+###  Linear Regression Models
+
+```{r}
+set.seed(123)
+linearTrain <- createDataPartition(LMCustD$GROSS_PROFIT_DEAD_NET, p=0.7, list=FALSE)
+lmtrn <- LMCustD[linearTrain,]
+lmtst <- LMCustD[-linearTrain,]
+lmtst$GROSS_PROFIT_DEAD_NET <- NA
+
+# Linear Model 1 - All possible predictor variables. Commenting out - takes to long to load.
+
+#linearModel <-  lm(formula = GROSS_PROFIT_DEAD_NET ~ SALES_OFFICE_DESCRIPTION + DELIVERY_PLANT_DESCRIPTION + ON_BOARDING_DATE + ADDRESS_CITY + COUNTY + GEO_LONGITUDE + GEO_LATITUDE + CUSTOMER_ACTIVITY_CLUSTER_DESCRIPTION + CUSTOMER_TRADE_CHANNEL_DESCRIPTION + BUSINESS_TYPE_EXTENSION_DESCRIPTION + MARKET_DESCRIPTION + COLD_DRINK_CHANNEL_DESCRIPTION,  data = lmtrn)
+
+#summary(linearModel)
+
+
+# Linear Model 2
+
+# commenting out due to out put length
+
+#linearMode2 <-  lm(formula = GROSS_PROFIT_DEAD_NET ~ ADDRESS_CITY + CUSTOMER_TRADE_CHANNEL_DESCRIPTION + COUNTY, data = lmtrn)
+#summary(linearMode2)
+
+
+
+head(lmtrn)
+
+```
+Linear or logistic regression are viable models; however, to get them to perform even better we will have to figure out what we want to do with the category variable. And for logistic regression figure out how to get customer age into a binary format (i.e. 0 if customer lasts less then three years. 1 if customer lasts three years or more.) Right now we are limited because they are large and not factorable and we have not aggregated them.We will have to discuss how we want to do this and what the best approach is.  After testing and with the predictor variables that I have I was only able to fit a linear model and even then it the output was too large. Some options are group by categories or use other models such as random forest or create a naive bayes model.
+
+```{}
+
+
+
+
+```
+

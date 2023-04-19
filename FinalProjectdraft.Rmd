@@ -1,0 +1,752 @@
+---
+title: 'Working Doc'
+author: "Cole Lifer"
+date: "3/19/23"
+output:
+  prettydoc::html_pretty:
+    theme: tactile
+    toc: true
+    toc_depth: 3
+---
+
+## Introduction
+
+Restaurants, fast food establishments, and other dining areas that allow for quick access to fountain soda provide a ripe landscape for Swire Coca-Cola’s B2B revenue streams. However, Swire Coca-Cola can’t simply provide machinery to whoever wants it. It needs to be a profitable investment for them as well. Typically, these results are measured over a 3-year sales volume for each establishment. The main success predictors of a Swire Coca-Cola’s customer are popularity, longevity, and total sales volume. Therefore, how can they make a more informed decision to provide a machine or not? The answer: Prediction.
+Realistically, Swire Coca-Cola would be able to use the predicted data to offer more competitive prices to interested customers. This could minimize their risk since a predictive model may be able to produce quality error metrics. Overall, customer retention and profitability would mutually beneficial for both involved parties. 
+
+An analytical approach could be taken for this problem that involves building a series of models and testing each of them individually with a wide range of test and train data. Included within this data would be valuable predictors such as historical sales data, consumer reviews, and location (and other census) data. We would seek to successfully predict outcome variables such as Customer Age (Longevity), Total Sales Volume, and Consumer Ratings.
+
+This project’s scope would include the initial building and testing of multiple models to predict the longevity, popularity, and total 3-year sales volume of a potential customer. After this initial phase, the final models will be chosen and tweaked to provide the best error metrics possible before using it in production. 
+
+Questions to guide exploration:
+
+Average customer length?
+Are customers similar in shared markets?
+Are shared markets segmented by customer type?
+What does the performance of customer types look like in general?
+How should we predict popularity without Restaurant Ratings available in the dataset? Zip Code? Geolocation? Most likely total sales.
+How do older customers compare to newer ones?
+
+```{r Setup, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(prettydoc)
+library(ggplot2)
+library(tidyverse)
+library(scales)
+library(caret)
+library(MASS)
+library(arm)
+library(gridExtra)
+library(knitr)
+library(kableExtra)
+library(knitr)
+library(dplyr)
+library(e1071)
+library(psych)
+library(C50)
+library(rminer)
+library(rmarkdown)
+library(matrixStats)
+library(rpart)
+#install.packages("rpart.plot")
+library(rpart.plot)
+#install.packages("rJava")
+library(rJava)
+#install.packages("RWeka")
+library(RWeka)
+library(plotROC)
+library(car)
+library(tidymodels)
+library(xgboost)
+library(corrplot)
+library(vip)
+library(DALEXtra)
+library(dataPreparation)
+library(themis)
+library(ranger)
+library(kernlab)
+#timing
+library(tictoc)
+
+tic()
+
+## Importing both files and combining for EDA
+
+CustData <- read.csv("FSOP_Customer_Data_v2.0 edited.csv")
+SalesData <- read.csv("FSOP_Sales_Data_v2.0.csv")
+
+
+## Combining Data
+#full_data <- rbind(SalesData, CustData)
+
+
+## Creating variable for cleaned training data to reference in our models
+
+#clean_train <- full_data %>% 
+ #na.omit(full_data)
+
+
+```
+### Basic Viewing
+
+Creating new variable for customer length, removing outliers, etc.
+```{r Viewing, warning = FALSE, message = FALSE}
+
+## Head
+
+head(SalesData)
+head(CustData)
+
+# Summaries
+
+#summary(SalesData)
+#summary(CustData)
+
+#na.omit(SalesData)
+#na.omit(CustData)
+```
+
+### Variable Creation
+```{r Viewing2, warning = FALSE, message = FALSE}
+
+New_Cust <- CustData %>%
+    mutate(New_Onboard = as.Date(ON_BOARDING_DATE, "%m/%d/%Y"),
+      Pulled_Date = as.Date("2023-02-11"),
+      Cust_Age_Yrs = round(as.numeric((difftime(Pulled_Date, New_Onboard, units = "days"))/365),digits = 4))
+
+sum(is.na(New_Cust$ON_BOARDING_DATE))
+sum(is.na(New_Cust$Pulled_Date))
+
+#No NA's so looking for values greater than pulled date (they can't exist)
+sum(New_Cust$ON_BOARDING_DATE >= "2023-02-19")
+
+
+head(New_Cust)
+
+#max(New_Cust$Cust_Age_Yrs)
+
+#checking
+min(New_Cust$Cust_Age_Yrs)
+
+
+#locating outlier row
+New_Cust[which.min(New_Cust$Cust_Age_Yrs),]
+
+#removing outlier
+New_Cust <- New_Cust[-13819,]
+
+#rechecking
+New_Cust[which.min(New_Cust$Cust_Age_Yrs),]
+
+```
+## Exploratory Data Analysis
+
+### Counties by Customer Age
+
+Seems to be wide variation among counties. We will dig in further at a later time; however, this is great intel for now.
+```{r EDA - Plots1, warning = FALSE, message = FALSE}
+
+## boxplots by county
+
+county_plot <- 
+ggplot(data = New_Cust, aes(x = COUNTY, y = Cust_Age_Yrs)) +
+  geom_boxplot() +
+  theme_classic() +
+  labs(x='Customer County',y='Customer Age',title='Boxplots by County') 
+
+county_plot
+``` 
+
+### Average Customer Age
+
+Should have a wide base of train & test data if average customer length is over 8.7 years.
+```{r EDA 2, echo = FALSE}
+
+print(mean(New_Cust$Cust_Age_Yrs))
+
+```
+
+### Customer Segments
+
+Average customer age varies widely by trade channel.
+``` {r EDA plots, warning = FALSE, message = FALSE}
+
+Seg_plot <- 
+ggplot(data = New_Cust, aes(x = reorder(factor(CUSTOMER_TRADE_CHANNEL_DESCRIPTION), -Cust_Age_Yrs), y = Cust_Age_Yrs)) +
+  geom_bar(stat = "summary", fun = "mean") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(x='Customer Trade Channel',y='Average Customer Age',title='Avg Age per Channel') 
+
+
+Seg_plot
+
+```
+## Sales Data Analysis
+
+There's a large range of invoice totals. Could possibly be segmented by City, State, Neighborhood, etc?
+``` {r sales, echo = FALSE, message = FALSE}
+
+# Largest amount purchased from Swire by Customer
+
+test_sales <-
+SalesData %>%
+  group_by(CUSTOMER_NUMBER_BLINDED) %>%
+  summarise(max = max(INVOICE_PRICE, na.rm=TRUE))
+
+test_sales
+
+```
+### Invoice Amounts
+
+There's a large distinction in each customer's largest invoices
+``` {r sales3, echo = FALSE, message = FALSE}
+
+# Max and Mins of largest Invoice Prices 
+
+print(max(test_sales$max))
+
+print(min(test_sales$max))
+```
+### Transactions per Customer
+
+There's a wide range of outcomes here. This will be good to dig into.
+``` {r transactions, warning = FALSE,message = FALSE}
+
+test_sales2 <-
+SalesData %>%
+  group_by(CUSTOMER_NUMBER_BLINDED) %>%
+  summarise(max = max(NUM_OF_TRANSACTIONS, na.rm=TRUE))
+
+test_sales2
+
+```
+### Max & Min Trans p/Customer
+
+There's a wide range of outcomes here. This will be good to dig into. Certain customers must be with Swire much longer.
+``` {r transactions2, warning = FALSE,message = FALSE}
+
+#max and mins
+
+print(max(test_sales2$max))
+
+print(min(test_sales2$max))
+
+```
+### Beverage Categories
+
+Perhaps, certain beverage categories have a better GP. After creating the plot, that seems obvious.
+``` {r bev cat, warning = FALSE,message = FALSE}
+
+## plot of beverage category by GP
+
+bev_plot <- 
+ggplot(data = SalesData, aes(x = reorder(factor(BEV_CAT_DESC), -GROSS_PROFIT_DEAD_NET), y = GROSS_PROFIT_DEAD_NET)) +
+  geom_histogram(stat = "summary") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(x='Beverage Category',y='Sum of Gross Profit',title='GP Per Bev Category') 
+
+bev_plot
+
+```
+
+# Results of EDA
+
+There are several issues with this data. There are incorrect dates, negative invoice amounts, and several other clear issues that will need to be thoroughly investigated and cleaned before we can accurately start modeling based off of it. I do believe I've made good steps towards identifying areas of interests when building my predictive model. Certain Beverage Categories seem to be much more lucrative, certain neighborhoods and cities seem to have much more customer success, and certain subsets of customers seem to order higher total invoice amounts. My EDA has immediately made me far more weary of the data first and foremost. It will need a lot of cleaning before we can trust it. However, I was able to see some good relationships amongst categories and outcome variables such as customer age (length), and gross profit. I don't have any ethical considerations yet. However, I'm also not 100% sure how we are supposed to predict consumer reviews without any real-life data whatsoever. I will need to research more. Once I have more information about the consumer reviews, ethical considerations may arise at that time. Up to this point, I haven't done any web scraping, etc.
+
+# Modeling
+
+## Further Data Preparation
+
+We have two main objectives here: To predict the longevity of a Swire Coca-Cola customer and also predict the total 3-year sales volume of new Swire customers.
+To predict the customer length, we need to create a new variable by determining their last purchase date and then subtract that from their onboarding date. This will become our outcome variable. To predict 3-year sales volume, we can produce total revenue over the two year period per customer and then extrapolate that over a three year period. After this, we can use this outcome variable.
+
+For the three-year sales volume, this will be a continuous outcome variable which means we have many possible models we could test. I believe a Neural Network, SVM, or some type of Linear/Logistic Regression could perform quite well. 
+
+For the customer length prediction, this is a categorical outcome variable. 1, 2, or 3+ years. Since we have buckets, a Decision Tree, SVM, or Naive Bayes Classifier could all be good options here. I believe Naive Bayes could perform quite well considering we have a multi-class classification problem and the nature of the input variables are mostly categorical.
+
+```{r further prep, message=FALSE, warning=FALSE, results = "hide"}
+
+
+# Realized previous customer age variable in CustData wasn't correct. We need to take the max of max posting date and subtract from onboarding date
+
+# Converting Sales Data dates to date format
+
+SalesData <- SalesData %>%
+    mutate(cust_start_date = as.Date(MIN_POSTING_DATE, format = "%m/%d/%Y"),
+           cust_end_date = as.Date(MAX_POSTING_DATE,format = "%m/%d/%Y"))
+
+#head(SalesData)
+
+# Finding max of max posting date for all customers
+
+custmaxtrans <- aggregate(cust_end_date ~ CUSTOMER_NUMBER_BLINDED, SalesData , max)
+
+#head
+#head(custmaxtrans)
+
+New_Cust1 <- New_Cust[,-18:-19]
+New_Cust1 <- merge(New_Cust1, custmaxtrans , by="CUSTOMER_NUMBER_BLINDED")
+
+# Creating new customer age variable
+
+New_Cust2 <- New_Cust1 %>%
+    mutate(Cust_Age_Yrs = round(as.numeric((difftime(cust_end_date, New_Onboard, units = "days"))/365),digits = 4))
+
+#Bucketing
+
+within(New_Cust2, New_Cust2$Cust_Age_Bucket <- ifelse(Cust_Age_Yrs < 2, 1, 
+                        ifelse(Cust_Age_Yrs < 3 & Cust_Age_Yrs > 2 , 2,
+                               ifelse(Cust_Age_Yrs > 3 , 3 ,NA))) )
+
+# Creating a new column called Age_Group
+
+New_Cust2$Age_Group <- ifelse(New_Cust2$Cust_Age_Yrs < 2, 1, ifelse(New_Cust2$Cust_Age_Yrs >= 2 & New_Cust2$Cust_Age_Yrs <= 3, 2, 3))
+
+max(New_Cust2$Age_Group)
+min(New_Cust2$Age_Group)
+
+New_Cust2 <- New_Cust2 %>%
+  mutate(
+    Age_Group = factor(Age_Group, levels = c("1", "2", "3"))
+  )
+
+#Factoring other variables
+
+New_Cust2 <- New_Cust2 %>%
+  mutate(
+    SALES_OFFICE_DESCRIPTION = factor(SALES_OFFICE_DESCRIPTION),
+    DELIVERY_PLANT_DESCRIPTION = factor(DELIVERY_PLANT_DESCRIPTION),
+    CUSTOMER_ACTIVITY_CLUSTER_DESCRIPTION = factor(CUSTOMER_ACTIVITY_CLUSTER_DESCRIPTION),
+    CUSTOMER_TRADE_CHANNEL_DESCRIPTION = factor(CUSTOMER_TRADE_CHANNEL_DESCRIPTION),
+    CUSTOMER_SUB_TRADE_CHANNEL_DESCRIPTION = factor(CUSTOMER_SUB_TRADE_CHANNEL_DESCRIPTION),
+    BUSINESS_TYPE_EXTENSION_DESCRIPTION = factor(BUSINESS_TYPE_EXTENSION_DESCRIPTION),
+    CUSTOMER_TRADE_CHANNEL_DESCRIPTION2 = factor(CUSTOMER_TRADE_CHANNEL_DESCRIPTION2),
+    MARKET_DESCRIPTION = factor(MARKET_DESCRIPTION),
+    COLD_DRINK_CHANNEL_DESCRIPTION = factor(COLD_DRINK_CHANNEL_DESCRIPTION),
+    ADDRESS_CITY = factor(ADDRESS_CITY),
+    COUNTY = factor(COUNTY),
+    ADDRESS_ZIP_CODE = as.numeric(ADDRESS_ZIP_CODE),
+    
+  )
+
+
+#test
+
+# Calculate the chi-squared statistic for all pairs of categorical variables
+chi_squared <- sapply(New_Cust2[, sapply(New_Cust2, is.factor)], function(x) sapply(New_Cust2[, sapply(New_Cust2, is.factor)], function(y) chisq.test(table(x, y))$statistic))
+
+# Extract the chi-squared values with the target variable
+chi_squared_with_target <- chi_squared[,"Age_Group"]
+
+# Sort the chi-squared values in descending order
+sorted_chi_squared <- sort(chi_squared_with_target, decreasing = TRUE)
+
+# Print the sorted chi-squared values
+print(sorted_chi_squared)
+
+# Select the top k variables based on the chi-squared values
+k <- 5
+selected_vars <- names(sorted_chi_squared)[1:k]
+
+#levels
+
+levels(New_Cust2$COLD_DRINK_CHANNEL_DESCRIPTION)
+
+```
+
+## Splitting Data
+
+```{r splitting data, message=FALSE, warning=FALSE}
+
+#Checking for NA's in Dataset
+
+colSums(is.na(New_Cust2))
+
+
+New_Cust2 <- New_Cust2[!(is.na(New_Cust2$COUNTY) | New_Cust2$COUNTY==""), ]
+
+#Using chi-squared and other methods to reduce noise
+
+Cust_Model_Set <- New_Cust2[,!names(New_Cust2) %in% c("CUSTOMER_NUMBER_BLINDED","ON_BOARDING_DATE","New_Onboard", "cust_end_date", "Cust_Age_Yrs", "GEO_LONGITUDE", "GEO_LATITUDE", "DELIVERY_PLANT_DESCRIPTION", "SALES_OFFICE_DESCRIPTION", "MARKET_DESCRIPTION", "COLD_DRINK_CHANNEL_DESCRIPTION","CUSTOMER_ACTIVITY_CLUSTER_DESCRIPTION")]
+
+
+# test for shits and giggles
+#New_Custtest <- New_Cust2[,17:20]
+
+# Splitting Customer Data into Train and Test
+
+set.seed(123)
+LETSTrain <- createDataPartition(Cust_Model_Set$Age_Group, p=0.4, list=FALSE)
+
+CustTrain <- Cust_Model_Set[LETSTrain,]
+CustTest <- Cust_Model_Set[-LETSTrain,]
+
+#basic metrics between splits
+
+summary(CustTrain)
+summary(CustTest)
+
+# Checking rows
+nrow(CustTrain)
+nrow(CustTest)
+
+
+#omitting NA's
+
+#CustTrain <- na.omit(CustTest)
+#CustTest <- na.omit(CustTest)
+
+# Checking rows again, values changed
+
+#nrow(CustTrain)
+#nrow(CustTest)
+
+
+table(CustTrain$Age_Group)
+table(CustTest$Age_Group)
+
+prop.table(table(CustTrain$Age_Group))
+prop.table(table(CustTest$Age_Group))
+
+
+CustTrain[!complete.cases(CustTrain), ]
+
+```
+# Customer Data Prediction
+
+## Initital Naive Bayes Classifier
+
+```{r initial NB, message=FALSE, warning=FALSE}
+
+
+
+# Training Model 
+
+Cust_nb <- naiveBayes(CustTrain$Age_Group~.,CustTrain)
+
+
+# Apply the model to the hold-out test set and generate holdout evaluation metrics
+
+predicted_Cust <- predict(Cust_nb, CustTest)
+
+mmetric(CustTest$Age_Group, predicted_Cust, metric="CONF")
+mmetric(CustTest$Age_Group, predicted_Cust, metric=c("ACC","TPR","PRECISION","F1"))
+
+
+
+```
+
+Even after removing the highly correlated predictors (ie. Customer Start Date vs. Age), Model Accuracy is over 62%. It does seem that our 2nd bucket produces the worst precision. This makes sense because it's the smallest sample size. I think we may be going down the right path in regards to customer data with the NB classifier. It seems like customer's geographic location must play a huge factor on success. However, this could purely be because certain areas (Zip Codes, etc) are newer markets. I will like to have a bigger dataset in the future to work with to verify if this is the case. I will continue with CV next.
+
+### Naive Bayes Classifier w/ Cross Validation
+
+```{r Define cv_function, message=FALSE, warning=FALSE}
+
+# creating cv_function for re-use with different inputs
+
+cv_function <- function(df, target, nFolds, seedVal, classification, metrics_list, laplace)
+{
+
+  set.seed(seedVal)
+  folds = createFolds(df[,target],nFolds)
+  # folds
+ 
+ cv_results <- lapply(folds, function(x)
+ { 
+   train <- df[-x,-target]
+   test  <- df[x,-target]
+   
+   train_target <- df[-x,target]
+   test_target <- df[x,target]
+   
+   classification_model <- classification(train,train_target, laplace = laplace) 
+   
+   pred<- predict(classification_model,test)
+   
+   return(mmetric(test_target,pred,metrics_list))
+ })
+ 
+ cv_results_m <- as.matrix(as.data.frame(cv_results))
+
+ cv_mean<- as.matrix(rowMeans(cv_results_m))
+ 
+ colnames(cv_mean) <- "Mean"
+ 
+ cv_sd <- as.matrix(rowSds(cv_results_m))
+ 
+ colnames(cv_sd) <- "Sd"
+ 
+ cv_all <- cbind(cv_results_m, cv_mean, cv_sd)
+ 
+ kable(cv_all,digits=2)
+}
+```  
+
+## Updated NB Classifier w/ CV
+
+```{r run cv for NB classifier, message=FALSE, warning=FALSE}
+
+#Locating Index for Target Variable
+#which(colnames(Cust_Model_Set)=="Age_Group")
+
+
+#Entering in Model Specifics
+df <- Cust_Model_Set
+target <- 8 #index of Age_Group variable
+nFolds <- 3
+seedVal <- 123
+laplace <- 15
+assign("classification", naiveBayes)
+metrics_list <- c("ACC","PRECISION","TPR","F1")
+
+#Calling CV function
+cv_function(df, target, nFolds, seedVal, classification, metrics_list, laplace)
+
+
+```
+
+Error metrics seem fairly similar once we cross-validate. Looks like we weren't initially over-fitted. I'm going to attempt this with a decision tree (Random Forest) model next to see if we may see better metrics.
+
+### Random Forest Continued
+
+Need to further partition and clean data for a randomForest model to work. We know that the data is massively imbalanced towards the 2nd bucket, therefore, we will need to perform some downsampling. However, this may actually hurt us since the sample size for bucket two is so small.
+```{r updated RF, message=FALSE, warning=FALSE}
+
+RF_FullData <- Cust_Model_Set[,!names(Cust_Model_Set) %in% c("COUNTY","ADDRESS_CITY")]
+
+RF_FullData <- RF_FullData %>%
+  mutate(
+    SALES_OFFICE_DESCRIPTION = factor(SALES_OFFICE_DESCRIPTION),
+    DELIVERY_PLANT_DESCRIPTION = factor(DELIVERY_PLANT_DESCRIPTION),
+    CUSTOMER_ACTIVITY_CLUSTER_DESCRIPTION = factor(CUSTOMER_ACTIVITY_CLUSTER_DESCRIPTION),
+    CUSTOMER_TRADE_CHANNEL_DESCRIPTION = factor(CUSTOMER_TRADE_CHANNEL_DESCRIPTION),
+    CUSTOMER_SUB_TRADE_CHANNEL_DESCRIPTION = factor(CUSTOMER_SUB_TRADE_CHANNEL_DESCRIPTION),
+    BUSINESS_TYPE_EXTENSION_DESCRIPTION = factor(BUSINESS_TYPE_EXTENSION_DESCRIPTION),
+    CUSTOMER_TRADE_CHANNEL_DESCRIPTION2 = factor(CUSTOMER_TRADE_CHANNEL_DESCRIPTION2),
+    MARKET_DESCRIPTION = factor(MARKET_DESCRIPTION),
+    COLD_DRINK_CHANNEL_DESCRIPTION = factor(COLD_DRINK_CHANNEL_DESCRIPTION),
+    ADDRESS_ZIP_CODE = as.numeric(ADDRESS_ZIP_CODE),
+    
+  )
+
+set.seed(123)
+rf_testtrn <- initial_split(RF_FullData, prop = 0.5,
+                                  strata = Age_Group)
+RFTrain <- training(rf_testtrn)
+RFTest  <- testing(rf_testtrn)
+
+#sum(is.na(RF_FullData$CUSTOMER_SUB_TRADE_CHANNEL_DESCRIPTION))
+
+
+rec_forest2 <- recipe(Age_Group ~ ., RFTrain[complete.cases(RFTrain),]) %>%
+  step_downsample(Age_Group, under_ratio = 1.5)
+
+## Adding 3-partition cross validation for resamples later
+forest_folds2 <- vfold_cv(RFTrain, v=3)
+
+## Creating model and setting mode to classification since our
+## outcome variable is a factor
+
+forest_model2 <- rand_forest(
+                     mtry = tune(),
+                     trees = tune(),
+                     min_n = tune()) %>%
+                     set_engine("ranger") %>%
+                     set_mode("classification")
+
+## Using all information to explore model fit and predict
+
+forest_wf2 <- workflow() %>%
+  add_model(forest_model2) %>%
+  add_recipe(rec_forest2)
+
+
+## We can now compute the performance metric ROC/AUC and set
+
+
+set.seed(123)
+forest_tune <-
+  forest_wf2 %>%
+  tune_grid(
+    resamples = forest_folds2,
+    grid = 10
+  )
+
+model_bestfit_RF2 <- forest_tune %>%
+  select_best("roc_auc")
+
+
+model_bestfit_RF2
+
+#Model was able to locate best fit
+
+```
+
+### Random Forest Model Metrics
+```{r rf model metrics, message=FALSE, warning=FALSE}
+
+final_workflow <- 
+  forest_wf2 %>% 
+  finalize_workflow(model_bestfit_RF2)
+
+final_fit <- 
+  final_workflow %>%
+  last_fit(split = rf_testtrn) 
+
+## Final model fit metrics
+
+final_fit %>%
+  collect_metrics()
+
+```
+
+AUC of .68 is reasonable for now.
+
+# Sales Data Prediction
+
+## Further Data Preparation
+
+```{r LM data prep, message=FALSE, warning=FALSE}
+
+# Customer total GP
+
+custGP <- aggregate(GROSS_PROFIT_DEAD_NET ~ CUSTOMER_NUMBER_BLINDED, SalesData , max)
+
+
+head(custGP)
+
+#Merging
+
+LMCustData <- merge(New_Cust2, custGP , by="CUSTOMER_NUMBER_BLINDED")
+
+head(LMCustData)
+
+
+```
+
+## Basic Linear Model
+
+```{r basic linear model, message=FALSE, warning=FALSE}
+
+#partitioning data
+
+set.seed(123)
+lmTrain <- createDataPartition(LMCustData$GROSS_PROFIT_DEAD_NET, p=0.7, list=FALSE)
+
+LMTraining <- LMCustData[lmTrain,]
+LMTesting <- LMCustData[-lmTrain,]
+
+## Setting target variable to NA for test set
+LMTesting$GROSS_PROFIT_DEAD_NET <- NA
+
+##Testing linear model with five predictor variables
+
+linear1 <-  lm(formula = GROSS_PROFIT_DEAD_NET ~ ADDRESS_CITY + CUSTOMER_TRADE_CHANNEL_DESCRIPTION + COUNTY, data = LMTraining)
+
+#summary(linear1)
+
+## R^2 of ..061, not a good description yet.
+
+
+```
+This was just a test model, but it performed extremely poorly. I do think there's still hope by fine tuning, reducing multi-collinarity, adding in more variables, adding interactions, etc. But as of now, it's not good enough.
+
+## MLP Numeric Prediction
+
+### Defining MLP Cross Validation Function
+
+```{r CV Function for KSVM, message=FALSE, warning=FALSE}
+
+MLP <- make_Weka_classifier("weka/classifiers/functions/MultilayerPerceptron")
+
+cv_function_MLP <- function(df, target, nFolds, seedVal, metrics_list, l, m, n, h)
+{
+# create folds using the assigned values
+
+set.seed(seedVal)
+folds = createFolds(df[,target],nFolds)
+
+# The lapply loop
+
+cv_results <- lapply(folds, function(x)
+{ 
+# data preparation:
+
+  test_target <- df[x,target]
+  test_input <- df[x,-target]
+  
+  train_target <- df[-x,target]
+  train_input <- df[-x,-target]
+  pred_model <- MLP(train_target ~ .,data = train_input,control = Weka_control(L=l,M=m, N=n,H=h))  
+  pred <- predict(pred_model, test_input)
+  return(mmetric(test_target,pred,metrics_list))
+})
+
+cv_results_m <- as.matrix(as.data.frame(cv_results))
+cv_mean<- as.matrix(rowMeans(cv_results_m))
+cv_sd <- as.matrix(rowSds(cv_results_m))
+colnames(cv_mean) <- "Mean"
+colnames(cv_sd) <- "Sd"
+cv_all <- cbind(cv_results_m, cv_mean, cv_sd)
+kable(t(cbind(cv_mean,cv_sd)),digits=2)
+}
+
+```
+
+### MLP Model Setup and Execution
+
+```{r basic mlp model, message=FALSE, warning=FALSE}
+
+#Factoring
+
+LMCustData <- LMCustData %>%
+  mutate(
+    CUSTOMER_NUMBER_BLINDED = factor(CUSTOMER_NUMBER_BLINDED),
+    SALES_OFFICE_DESCRIPTION = factor(SALES_OFFICE_DESCRIPTION),
+    DELIVERY_PLANT_DESCRIPTION = factor(DELIVERY_PLANT_DESCRIPTION),
+    CUSTOMER_ACTIVITY_CLUSTER_DESCRIPTION = factor(CUSTOMER_ACTIVITY_CLUSTER_DESCRIPTION),
+    CUSTOMER_TRADE_CHANNEL_DESCRIPTION = factor(CUSTOMER_TRADE_CHANNEL_DESCRIPTION),
+    CUSTOMER_SUB_TRADE_CHANNEL_DESCRIPTION = factor(CUSTOMER_SUB_TRADE_CHANNEL_DESCRIPTION),
+    BUSINESS_TYPE_EXTENSION_DESCRIPTION = factor(BUSINESS_TYPE_EXTENSION_DESCRIPTION),
+    CUSTOMER_TRADE_CHANNEL_DESCRIPTION2 = factor(CUSTOMER_TRADE_CHANNEL_DESCRIPTION2),
+    MARKET_DESCRIPTION = factor(MARKET_DESCRIPTION),
+    COLD_DRINK_CHANNEL_DESCRIPTION = factor(COLD_DRINK_CHANNEL_DESCRIPTION),
+    ADDRESS_ZIP_CODE = as.numeric(ADDRESS_ZIP_CODE),
+    
+  )
+
+
+LMCustData <- LMCustData[,!names(LMCustData) %in% c("CUSTOMER_NUMBER_BLINDED","ON_BOARDING_DATE","ADDRESS_CITY", "COUNTY", "New_Onboard", "cust_end_date")]
+
+df <- LMCustData
+target <- 15
+seedVal <- 123
+metrics_list <- c("MAE","RMSE","MAPE","RMSPE","RAE","RRSE","R2")
+
+cv_function_MLP(df, target, 3, seedVal, metrics_list, 0.001, 0.2, 10, 5)
+
+toc() # stop timing
+```
+I specified very low-compute intensive hyper-parameters because I'm running into compute issues. Although, this may be a useful model.
+
+# Summary - Modeling Process
+
+## Model Selection
+
+Overall, we have two main prediction models to build: Predicting Customer Age & Predicting Total 3-Year Sales Volume. For Customer Age, I'm rather confident we can use our Naive Bayes Classifier or a Decision Tree. We will probably end up using the NB Classifier. It was much less intensive to compute and produced a 62% model accuracy with minimal intervention. In terms of predicting sales volume, most complex modeling techniques require a large amount of compute time because these data sets are very large. I believe we will end up settling on a Linear Regression of some kind. We weren't able to produce any quality RMSE/R^2 metrics quite yet.
+
+## Cross Validation
+
+Every single model that was tested was implemented with Cross Validation besides the basic linear regression. I was extremely impressed as the error metrics remained relatively stable from the traditional Naive Bayes classifier to the 3-fold cross validated model. This is what gave me so much confidence in pursuing that model. Most cross validation was performed by defining a CV function for each modeling type and then calling that function to perform the training and testing. However, some CV was performed in the training itself without a new function; such as with the Random Forest classifier. 
+
+## Model Tuning
+
+While I couldn't necessarily use any compute-intensive hyperparameter combinations, I was able to tune the models through several techniques. Firstly, I added down-sampling to the Random Forest model to account for a mismatch in the customer age bucket samples. I also performed grid tuning, adjusting learning rate, neurons per layer, etc. 
+
+## Model Performance
+
+I didn't run a tictoc function on my Naive Bayes classifier but I do know it was extremely quick. The accuracy was listed at a 62.4% overall, a number which can be pushed higher with further model tweaking. The precision scores varied drastically depending on the classifier so I will seek to further tweak the training set to produce better outcomes. 
+
+## Closing Summary
+
+Overall, this was a great start towards the completion of this business problem. I believe we have the base models to build from and with more compute, fine tuning, and data cleaning, we could start seeing very impressive error metrics such as Accuracy for the classifier and high R^2 values for the linear regression. These models could practically be implemented once they are more fine tuned. 
